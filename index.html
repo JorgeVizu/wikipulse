@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WikiPulse · Wikipedia en español</title>
+<style>
+  :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #0d1420; color: #edf4ff; }
+  body { margin: 0; }
+  main { max-width: 850px; margin: auto; padding: clamp(24px, 7vw, 72px) 20px; }
+  header { margin-bottom: 32px; }
+  h1 { font-size: clamp(42px, 9vw, 76px); letter-spacing: -.07em; margin: 0; }
+  h2 { font-size: 19px; margin: 0; }
+  p { color: #aabbd3; }
+  section { background: #142034; border: 1px solid #2a3b52; padding: clamp(14px, 4vw, 28px); border-radius: 18px; }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th, td { padding: 12px 6px; border-bottom: 1px solid #2a3b52; }
+  td:nth-child(n+3), th:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+  td:nth-child(2) { overflow-wrap: anywhere; }
+  a { color: #85e4c3; text-underline-offset: 3px; }
+  footer { margin-top: 22px; font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>WikiPulse</h1>
+    <p>Artículos más editados de Wikipedia en español por ventana de cinco minutos.</p>
+  </header>
+  <section aria-labelledby="ranking">
+    <h2 id="ranking">Última ventana publicada</h2>
+    <p id="status" role="status">Esperando la primera ventana de Flink…</p>
+    <table hidden>
+      <thead><tr><th scope="col">Pos.</th><th scope="col">Historial del artículo</th><th scope="col">Ediciones</th><th scope="col">Retraso medio de ingesta</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+  <footer><a href="https://wikitech.wikimedia.org/wiki/EventStreams">Fuente Wikimedia EventStreams</a></footer>
+</main>
+<script>
+  const table = document.querySelector("table");
+  const body = table.querySelector("tbody");
+  const statusLine = document.querySelector("#status");
+  const time = new Intl.DateTimeFormat("es-ES", {timeStyle: "medium", timeZone: "UTC"});
+  const seconds = new Intl.NumberFormat("es-ES", {maximumFractionDigits: 1});
+  let lastPayload = "";
+
+  function display({window_end, rows}) {
+    if (!rows.length) {
+      table.hidden = true;
+      statusLine.textContent = "Esperando la primera ventana de Flink…";
+      return;
+    }
+    const asUTC = value => time.format(new Date(value.replace(" ", "T") + "Z"));
+    const label = asUTC(rows[0].window_start) + " – " + asUTC(window_end) + " UTC";
+    statusLine.textContent = label;
+    table.hidden = false;
+    body.replaceChildren();
+    for (const row of rows) {
+      const line = body.insertRow();
+      line.insertCell().textContent = row.rank_no;
+      const link = document.createElement("a");
+      const history = new URL("https://es.wikipedia.org/w/index.php");
+      history.searchParams.set("title", row.title);
+      history.searchParams.set("action", "history");
+      link.href = history;
+      link.textContent = row.title;
+      line.insertCell().append(link);
+      line.insertCell().textContent = row.edit_count;
+      line.insertCell().textContent = seconds.format(row.avg_ingest_ms / 1000) + " s";
+    }
+  }
+
+  async function refresh() {
+    try {
+      const response = await fetch("/api/ranking", {signal: AbortSignal.timeout(4000)});
+      if (!response.ok) throw new Error(response.status);
+      const raw = await response.text();
+      if (raw !== lastPayload) {
+        display(JSON.parse(raw));
+        lastPayload = raw;
+      }
+    } catch {
+      lastPayload = "";
+      statusLine.textContent = "Conexión con el panel interrumpida. Reintentando…";
+    } finally {
+      setTimeout(refresh, 2000);
+    }
+  }
+  refresh();
+</script>
+</body>
+</html>

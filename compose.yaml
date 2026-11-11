@@ -1,0 +1,90 @@
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  topics:
+    image: apache/kafka:3.9.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        for topic in wiki-edits wiki-ranking; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "$$topic" --partitions 3 --replication-factor 1
+        done
+
+  jobmanager:
+    build: {context: ., dockerfile: Flink.Dockerfile}
+    command: jobmanager
+    ports: ["127.0.0.1:8091:8081"]
+    environment: &flink
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 3
+        state.checkpoints.dir: file:///opt/flink/checkpoints
+        restart-strategy.type: fixed-delay
+        restart-strategy.fixed-delay.attempts: 20
+        restart-strategy.fixed-delay.delay: 5 s
+    volumes: ["checkpoints:/opt/flink/checkpoints"]
+
+  taskmanager:
+    build: {context: ., dockerfile: Flink.Dockerfile}
+    command: taskmanager
+    depends_on: [jobmanager]
+    environment: *flink
+    volumes: ["checkpoints:/opt/flink/checkpoints"]
+
+  submit:
+    build: {context: ., dockerfile: Flink.Dockerfile}
+    depends_on:
+      topics:
+        condition: service_completed_successfully
+      taskmanager:
+        condition: service_started
+    environment: *flink
+    entrypoint: ["/bin/bash", "/opt/flink/submit.sh"]
+
+  ingest:
+    build: .
+    command: ["python", "ingest.py", "live"]
+    depends_on:
+      topics:
+        condition: service_completed_successfully
+    environment:
+      WIKIMEDIA_USER_AGENT: ${WIKIMEDIA_USER_AGENT:-WikiPulse-demo/0.1 (local educational streaming demo)}
+      AZURE_BOOTSTRAP: ${AZURE_BOOTSTRAP:-}
+      AZURE_CONNECTION_STRING: ${AZURE_CONNECTION_STRING:-}
+      AZURE_TOPIC: ${AZURE_TOPIC:-wiki-edits}
+    volumes: ["ingest:/state"]
+    restart: on-failure
+
+  dashboard:
+    build: .
+    depends_on:
+      topics:
+        condition: service_completed_successfully
+    ports: ["127.0.0.1:8090:8080"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+
+
+
+volumes:
+  checkpoints:
+  ingest:

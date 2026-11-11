@@ -1,0 +1,12 @@
+services:
+  relay:
+    build: .
+    command: ["python", "ingest.py", "relay"]
+    depends_on:
+      topics:
+        condition: service_completed_successfully
+    environment:
+      AZURE_BOOTSTRAP: ${AZURE_BOOTSTRAP:?Define AZURE_BOOTSTRAP}
+      AZURE_CONNECTION_STRING: ${AZURE_CONNECTION_STRING:?Define AZURE_CONNECTION_STRING}
+      AZURE_TOPIC: ${AZURE_TOPIC:-wiki-edits}
+    restart: on-failure

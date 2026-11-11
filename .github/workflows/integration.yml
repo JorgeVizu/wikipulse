@@ -1,0 +1,14 @@
+name: WikiPulse integration
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up --build -d dashboard submit
+      - run: python smoke.py
+      - if: always()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down -v
